@@ -236,7 +236,3 @@ You have successfully:
 Now you can monitor your Kubernetes cluster’s health and performance.
 
 ```
-
----
-
-This `README.md` covers everything from the initial installation to the final dashboard view. Save it on your server or include it in your project repository. Let me know if you want to add more sections (e.g., setting up alerts, persistent storage, or using an Ingress).
