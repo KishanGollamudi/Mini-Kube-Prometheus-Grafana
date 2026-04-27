@@ -1,30 +1,30 @@
-# Monitoring Kubernetes (Minikube) with Prometheus & Grafana
+# Kubernetes Monitoring with Prometheus & Grafana on Minikube
 
-This repository contains a complete guide to set up a monitoring stack on a local Minikube cluster (tested on Ubuntu 22.04/24.04, including AWS EC2). It includes:
+This guide documents a complete setup of a monitoring stack on a Minikube cluster (running on an Ubuntu server / EC2 instance). It includes:
 
-- Installation of **Docker**, **kubectl**, **Minikube**, and **Helm**
+- Installation of **Docker**, **kubectl**, **Minikube** and **Helm**
 - Deployment of **Prometheus** and **Grafana** using the `kube-prometheus-stack` Helm chart
-- Automated bash scripts for quick installation
-- Manual steps for understanding each component
-
-After completion, you will be able to monitor CPU, memory, and other metrics of your Kubernetes cluster and pods.
+- Accessing and understanding dashboards
+- Creating custom panels, saving dashboards, and sharing snapshots
+- Troubleshooting common issues like missing container metrics and broken snapshot links
 
 ---
 
 ## 📋 Prerequisites
 
-- An Ubuntu server (or EC2 instance) with internet access.
+- Ubuntu 22.04 / 24.04 server (or an AWS EC2 instance) with internet access.
 - A user with `sudo` privileges.
+- Firewall (security group) allowing inbound TCP on ports `3000` and `9090` (if accessing from outside).
 
 ---
 
 ## 🤖 Automated Installation (Recommended)
 
-Use the provided bash scripts to get a fully working environment in minutes.
+Use the provided bash scripts for a quick, repeatable setup.
 
-### 1. Install Minikube only
+### 1. Install Minikube Only
 
-Save the following as `install-minikube.sh`, make it executable and run it:
+Save the following as `install-minikube.sh`, make it executable and run it.
 
 ```bash
 #!/bin/bash
@@ -37,6 +37,7 @@ sudo apt install -y curl wget apt-transport-https
 sudo apt install -y docker.io
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
+echo "Docker installed. Log out & back in or run 'newgrp docker'."
 
 # kubectl
 curl -LO "https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl"
@@ -55,17 +56,14 @@ kubectl wait --for=condition=ready node --all --timeout=120s
 echo "Minikube is ready!"
 ```
 
-Run:
 ```bash
 chmod +x install-minikube.sh
 ./install-minikube.sh
 ```
 
-> 💡 After installation, you may need to run `newgrp docker` or log out and back in to use Docker without `sudo`.
+### 2. Install Prometheus & Grafana (on an existing Minikube cluster)
 
-### 2. Install Prometheus & Grafana on an existing Minikube cluster
-
-Save the following as `install-monitoring.sh` and run **after** Minikube is running:
+Save as `install-monitoring.sh`, run **after** Minikube is running.
 
 ```bash
 #!/bin/bash
@@ -98,10 +96,9 @@ kubectl wait --for=condition=ready pod --all -n monitoring --timeout=300s
 echo ""
 echo "✅ Installation complete!"
 echo "Grafana admin password: Admin123!"
-echo "Run port-forward commands to access the dashboards (see manual section below)."
+echo "Run port-forward commands to access the dashboards (see manual section)."
 ```
 
-Run:
 ```bash
 chmod +x install-monitoring.sh
 ./install-monitoring.sh
@@ -109,7 +106,7 @@ chmod +x install-monitoring.sh
 
 ---
 
-## 🪜 Manual Step‑by‑Step (for learning)
+## 🪜 Manual Step‑by‑Step (for Learning)
 
 If you prefer to run each command manually, follow these sections.
 
@@ -134,8 +131,6 @@ sudo mv minikube-linux-amd64 /usr/local/bin/minikube
 
 # Start cluster
 minikube start --driver=docker --memory=2500mb --cpus=2 --disk-size=20g
-
-# Verify
 kubectl get nodes
 ```
 
@@ -172,114 +167,172 @@ kubectl get pods -n monitoring -w
 
 ### 4. Access Grafana and Prometheus from your browser
 
-Since the services are `ClusterIP`, you need to forward ports to your EC2 public IP (or localhost).
+Because the services are `ClusterIP`, you need to port‑forward to your EC2 public IP.
 
-**Forward Grafana (port 3000):**
+**Grafana (port 3000):**
 ```bash
 kubectl port-forward --address 0.0.0.0 -n monitoring svc/monitoring-grafana 3000:80
 ```
 
-**Forward Prometheus (port 9090):**
+**Prometheus (port 9090):**
 ```bash
 kubectl port-forward --address 0.0.0.0 -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
 ```
 
-> ⚠️ Binding to `0.0.0.0` exposes services to the internet – use only for testing. In production, use an Ingress or a VPN.
+> ⚠️ **Security note:** Binding to `0.0.0.0` exposes the services to the internet – only for testing. Use an Ingress or VPN in production.
 
-Now open your browser:
-- Grafana: `http://<YOUR_EC2_PUBLIC_IP>:3000` (user: `admin`, password: `Admin123!` or the one from secret)
+Now open:
+- Grafana: `http://<YOUR_EC2_PUBLIC_IP>:3000`
 - Prometheus: `http://<YOUR_EC2_PUBLIC_IP>:9090`
 
-**Alternative using `minikube service` (no port‑forward needed):**
-```bash
-minikube service -n monitoring monitoring-grafana
-minikube service -n monitoring monitoring-kube-prometheus-prometheus
-```
+**Alternative (no port‑forward):**  
+`minikube service -n monitoring monitoring-grafana` (and similarly for Prometheus).
 
-### 5. Get the Grafana admin password (if you didn't set a custom one)
+### 5. Log into Grafana
 
+If you used the custom password `Admin123!`, credentials are:
+- Username: `admin`
+- Password: `Admin123!`
+
+Otherwise, retrieve the auto‑generated password:
 ```bash
 kubectl get secret -n monitoring monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
 ```
 
 ---
 
-## 📊 Viewing CPU and Memory Metrics
+## 📊 Working with Dashboards
 
-Once logged into Grafana:
+### Viewing Pre‑configured Dashboards
 
-1. Click the **≡** (menu) → **Dashboards** → **Browse**.
-2. Look for the `kube-prometheus-stack` dashboards:
-   - `Kubernetes / Compute Resources / Cluster` → overall CPU and RAM usage.
-   - `Kubernetes / Compute Resources / Pod` → per‑pod CPU/memory.
-   - `Node Exporter / Nodes` → EC2 instance metrics.
-3. Use the **time picker** (top right) to adjust the range.
-4. Some panels may show “No data” – this is normal if your pods do not have resource requests/limits defined. The actual utilisation graphs will still work.
+After logging in, click the **≡** (menu) → **Dashboards** → **Browse**.  
+You will see dashboards like:
 
-To generate test metrics, run a simple nginx pod:
+- `Kubernetes / Compute Resources / Cluster` – overall CPU & memory
+- `Kubernetes / Compute Resources / Pod` – per‑pod metrics
+- `Node Exporter / Nodes` – EC2 instance metrics
+
+Click on any to open it. The graphs will show CPU utilisation, memory usage, etc.
+
+> **Note:** Some panels may show “No data” – this is normal if your pods do not have resource requests/limits defined. The actual usage graphs work fine.
+
+### Creating a Test Pod with CPU/Memory Requests
+
+To see the “CPU Requests Commitment” and “Memory Limits Commitment” panels populate, create a pod with explicit requests:
 
 ```bash
-kubectl run nginx --image=nginx
+kubectl run nginx2 --image=nginx --overrides='
+{
+  "spec": {
+    "containers": [{
+      "name": "nginx2",
+      "image": "nginx",
+      "resources": {
+        "requests": {"cpu": "100m", "memory": "128Mi"},
+        "limits": {"cpu": "200m", "memory": "256Mi"}
+      }
+    }]
+  }
+}'
 ```
 
-Then observe its metrics in the `Kubernetes / Compute Resources / Pod` dashboard.
+### Creating Custom Panels (Graph / Pie Chart)
+
+1. From a dashboard, click **Add panel** → **Add a new panel**.
+2. In the **Query** field, enter a PromQL query (examples below).
+3. Change the visualization (Time series, Pie chart, etc.) using the dropdown on the right.
+4. Click **Apply** → **Save dashboard**.
+
+#### Example PromQL Queries
+
+- **CPU usage per pod:**
+  ```promql
+  sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (pod)
+  ```
+- **Memory usage per pod:**
+  ```promql
+  sum(container_memory_working_set_bytes{container!=""}) by (pod)
+  ```
+- **Node memory used (on EC2):**
+  ```promql
+  node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes
+  ```
+
+### Saving and Finding Your Dashboards
+
+- After adding panels, click the **Save dashboard** icon (floppy disk) at the top right.
+- The dashboard will be saved in the **General** folder. Find it via:
+  - Left sidebar → **Dashboards** → **Browse**
+  - Search (`Ctrl+k`) by name
+  - Check **Recently viewed** on the home page
+
+### Sharing a Panel or Dashboard
+
+You can share individual panels using **snapshots** or direct links.
+
+#### Method 1: Direct Link (requires login)
+
+1. Hover over the panel title → click **Share** → **Link** tab.
+2. Copy the URL. Users must have Grafana access.
+
+#### Method 2: Snapshot (public, no login required)
+
+1. In the panel’s **Share** dialog, go to the **Snapshot** tab.
+2. Click **Publish to snapshot**.
+3. The snapshot URL will contain `localhost`. **Replace `localhost` with your EC2 public IP** before sharing.
+
+Example:
+```
+Original: http://localhost:3000/dashboard/snapshot/7tFY7FIR7HpNmGd
+Correct:  http://52.201.57.125:3000/dashboard/snapshot/7tFY7FIR7HpNmGd
+```
+
+Snapshots are static point‑in‑time copies – they do not require Prometheus to be running.
 
 ---
 
-## 🧪 Testing with a Load (Optional)
+## 🔧 Troubleshooting
 
-Create a deployment with CPU/memory requests:
-
-```bash
-kubectl create deployment test --image=nginx --requests=cpu=100m,memory=128Mi
-```
-
-Or generate load on the nginx pod:
-
-```bash
-while true; do curl -s http://<nginx-pod-ip> > /dev/null; sleep 0.1; done
-```
-
-Watch the CPU graph spike.
+| Problem | Solution |
+|---------|----------|
+| `kubectl` commands return “connection refused” | Start Minikube: `minikube start` |
+| Grafana login fails with the generated secret | Reinstall using a custom `adminPassword` as shown above. |
+| “No data” in dashboards | Wait 2‑3 minutes for metrics to appear. Check that Prometheus targets are **UP** at `http://<EC2_IP>:9090/targets`. |
+| Container metrics missing (e.g., `container_memory_working_set_bytes`) | This can happen with some container runtimes. Use node metrics (e.g., `node_memory_*`) instead, or reinstall the chart with `kubelet.serviceMonitor.cAdvisor: true`. |
+| After reboot, cluster not responding | Run `minikube stop && minikube start` to restore the cluster. |
+| Snapshot shows “localhost refused connection” | Replace `localhost` with your EC2 public IP in the snapshot URL. |
+| Port‑forward stops after closing terminal | Use a terminal multiplexer (`tmux` or `screen`) or run the command with `nohup`. |
 
 ---
 
 ## 🧹 Clean Up
 
-To remove everything:
+To remove everything and start fresh:
 
 ```bash
-helm uninstall monitoring -n monitoring          # remove Prometheus/Grafana
-kubectl delete namespace monitoring             # delete all monitoring resources
-minikube delete                                 # delete the entire cluster
+helm uninstall monitoring -n monitoring   # remove Helm release
+kubectl delete namespace monitoring       # delete monitoring namespace
+minikube delete                           # delete the entire cluster
 ```
 
-If you want to keep the cluster but only remove the monitoring stack, just run the `helm uninstall` command.
+Remove the installation scripts and downloaded binaries if desired.
 
 ---
 
-## 🐞 Troubleshooting
+## 📚 References
 
-| Problem | Solution |
-|---------|----------|
-| `kubectl` commands fail with “connection refused” | Start Minikube: `minikube start` |
-| Grafana login fails | Use the custom password `Admin123!` or retrieve the secret as shown above. If still failing, reinstall with the custom password. |
-| “No data” in dashboards | Wait a few minutes. Check that Prometheus is scraping targets at `http://EC2_IP:9090/targets`. |
-| Port‑forward stops after closing terminal | Use `nohup` or run the command inside `screen`/`tmux`. Alternatively, use `minikube service`. |
-
----
-
-## 🔗 References
-
-- [kube-prometheus-stack Helm chart](https://github.com/premetheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
-- [Grafana Dashboards](https://grafana.com/grafana/dashboards/)
+- [kube-prometheus-stack Helm chart](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
+- [Grafana Documentation](https://grafana.com/docs/)
+- [Prometheus Documentation](https://prometheus.io/docs/)
 - [Minikube Documentation](https://minikube.sigs.k8s.io/docs/)
 
 ---
 
 ## ✅ Conclusion
 
-You now have a fully functional monitoring stack for your Minikube cluster. You can visualise CPU, memory, network, and disk metrics, set up alerts, and explore Prometheus queries. The automated scripts can be reused to set up the same environment on any Ubuntu server.
+You now have a fully functional monitoring stack on Minikube. You can view CPU and memory usage, create custom dashboards, and share snapshots. The automated scripts allow you to replicate this setup on any Ubuntu server in minutes.
 
 Happy monitoring! 🎯
 ```
+
+This README includes every step from the conversation, the scripts, the snapshot fix, and the dashboard creation. You can now add it to your project repository.
